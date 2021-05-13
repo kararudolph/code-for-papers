@@ -1,0 +1,336 @@
+library(stringr)
+library(sas7bdat)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+
+#load data
+
+#reshape to wide
+widedata<-reshape(longdat[,c("PATID", "visitnumber", "D51DOSE", "anyopioiduse", "relapsetv")], direction = "wide", idvar = "PATID", timevar = "visitnumber")
+
+widedata$weekof4consec<-99
+for(i in 1:nrow(widedata)){
+	for(j in 4:24){
+		if(I(widedata[i,]$weekof4consec>j)){
+			widedata[i,]$weekof4consec<-ifelse((is.na(widedata[i,paste0("anyopioiduse.",j)]) | widedata[i,paste0("anyopioiduse.",j)]==1) & (is.na(widedata[i,paste0("anyopioiduse.",j-1)]) | widedata[i,paste0("anyopioiduse.",j-1)]==1) & (is.na(widedata[i,paste0("anyopioiduse.",j-2)]) | widedata[i,paste0("anyopioiduse.",j-2)]==1) & (is.na(widedata[i,paste0("anyopioiduse.",j-3)]) | widedata[i,paste0("anyopioiduse.",j-3)]==1) ,j,99)
+	}
+}
+}
+
+#merge with imputed baseline variables for 5 imputed datasets
+
+widedat<-list()
+for(i in 1:5){
+	dat<-read.csv(paste0("testdat",i,".csv"))[,-1]
+	dat2<-dat[dat$A==0 & dat$Z==1,]
+	dat3<-cbind(tmp[,1], dat2)
+	names(dat3)[1]<-"PATID"
+	dat4<-dat3[,1:36]
+	widedat[[i]]<-merge(dat4, widedata, by="PATID", all=TRUE)
+}
+
+#if L is missing but dose not missing, set L to 1
+#if L is missing and dose is missing, set L to 0
+
+for(k in 1:5){
+
+for(i in 1:nrow(widedat[[k]])){
+		for(j in 0:24){
+		if(!is.na(widedat[[k]][i,paste0("D51DOSE.",j)]) & is.na(widedat[[k]][i,paste0("anyopioiduse.",j)])){
+			widedat[[k]][i,paste0("anyopioiduse.",j)]<-1
+		} else if(is.na(widedat[[k]][i,paste0("D51DOSE.",j)]) & is.na(widedat[[k]][i,paste0("anyopioiduse.",j)])){
+			widedat[[k]][i,paste0("anyopioiduse.",j)]<-0
+		}
+}
+}
+}
+
+#carry forward last dose
+for(k in 1:5){
+for(i in 1:nrow(widedat[[k]])){
+	#if(!is.na(ydat[i,22])==0) {ydat[i,2:22]<-rep(0,21)}
+	for(j in 1:24){
+		if(is.na(widedat[[k]][i,paste0("D51DOSE.",j)]) & !is.na(widedat[[k]][i,paste0("D51DOSE.",j-1)])){
+			widedat[[k]][i,paste0("D51DOSE.",j)]<-widedat[[k]][i,paste0("D51DOSE.",j-1)]
+		}
+
+}}
+}
+#if dose is NA, make previous dose value
+
+#remove relapse at 0,1,2,
+for(k in 1:5){
+	widedat[[k]]<-widedat[[k]][,-c(50,53,56)]
+}
+
+#remove dose at time 0.
+for(k in 1:5){
+	widedat[[k]]<-widedat[[k]][,-c(48)]
+}
+
+for(k in 1:5){
+	widedat[[k]][,paste0("A.", c(2:22,24))]<-9
+}
+
+#make increases in dose
+for(k in 1:5){
+
+for(i in 1:nrow(widedat[[k]])){
+	#if(!is.na(ydat[i,22])==0) {ydat[i,2:22]<-rep(0,21)}
+	for(j in c(2:22,24)){
+		
+		#A ==1 if increase dose or if has a nonzero dose after no visit
+		widedat[[k]][i,paste0("A.",j)]<-ifelse(widedat[[k]][i,paste0("D51DOSE.",j)]>widedat[[k]][i,paste0("D51DOSE.",j-1)] , 1, 0) 
+
+	}}
+}
+
+#abar1 if use and under 32mg otherwise 0
+
+set.seed(239470)
+##get estimates 
+
+est<-lci<-uci<-rrest<-rrlci<-rruci<-cntest<-cntlci<-cntuci<-txest<-txlci<-txuci<-list(c())
+
+ydates<-c(3:22,24)
+#order data 
+widedat2<-list()
+
+for(k in 1:5){
+widedat2[[k]]<-widedat[[k]][,c(2:36, 48:50, 52,
+	119, 51, 54,
+	120, 55,  
+	53,57,121,58, 61, 64,66,67,
+	#visit 8
+	62,69,125,70,  91, 
+	#visit 10
+	68,72,127,73, 94,
+	#visit 12
+	71,75,129, 
+	76, 97,100,103,79,106,82,109,85,112,115, 118)]
+}
+
+for(k in 1:5){
+	widedat2[[k]][85,c("D51DOSE.1", "A.2")]<-c(8,0)
+}
+Anodesfull <- list(c("A.2", "A.3"), c("A.2", "A.3", "A.4"), c("A.2", "A.3", "A.4"),c("A.2", "A.3", "A.4"),c("A.2", "A.3", "A.4"), 
+	c("A.2", "A.3", "A.4", "A.8"), c("A.2", "A.3", "A.4", "A.8"), 
+	c("A.2", "A.3", "A.4", "A.8", "A.10"),c("A.2", "A.3", "A.4", "A.8", "A.10"), 
+	c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12"),c("A.2", "A.3", "A.4", "A.8", "A.10", "A.12") )
+
+Lnodesfull<-list(c("D51DOSE.2", "anyopioiduse.3"), 
+	c("D51DOSE.2", "anyopioiduse.3","D51DOSE.3", "anyopioiduse.4"),c("D51DOSE.2", "anyopioiduse.3","D51DOSE.3", "anyopioiduse.4"),c("D51DOSE.2", "anyopioiduse.3","D51DOSE.3", "anyopioiduse.4"),c("D51DOSE.2", "anyopioiduse.3","D51DOSE.3", "anyopioiduse.4"),
+	c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8"),
+	c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10"),
+	c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"),c("D51DOSE.2", "anyopioiduse.3", "D51DOSE.3", "anyopioiduse.4",  "D51DOSE.6", "anyopioiduse.8", "D51DOSE.8", "anyopioiduse.10","D51DOSE.10", "anyopioiduse.12"))
+
+covout<-colnames(widedat2[[1]][,c(1:39)])
+
+doselagged<-list( c(1,2), c(1,2,3),c(1,2,3),c(1,2,3), c(1,2,3), c(1,2,3,6),c(1,2,3,6), c(1,2,3,6,8),c(1,2,3,6,8), c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10),c(1,2,3,6,8,10))
+
+for(k in 1:5){
+for(i in 1:length(ydates)){
+	print(i)
+Anodes <- Anodesfull[[i]]
+Lnodes <- Lnodesfull[[i]]
+nums<-as.numeric(gsub("A.", "", Anodes))
+dosenums<-doselagged[[i]]
+numsy<-nums[-c(1,length(nums))]
+Ynodes <- paste0("relapsetv.", c(numsy,ydates[i]))
+#select columns without changing order
+
+dosecol<-paste0("D51DOSE.",dosenums)
+othcol<-c(covout, Anodes, Lnodes, Ynodes)
+newdosecol<-dosecol[!dosecol %in% othcol ]
+keepcol<-c(covout, Anodes, Lnodes, Ynodes, newdosecol)
+
+dat<-widedat2[[k]][keepcol]
+
+abar1a <- dat[, paste0("anyopioiduse.", nums)] ==1
+abar1b <- dat[, paste0("D51DOSE.", dosenums)]<32
+abar1<-I(abar1a==TRUE & abar1b==TRUE)
+
+abar0<-matrix(rep(FALSE, length(Anodes)*nrow(dat)), ncol=length(Anodes))
+
+set.seed(239470)
+alldosenames<-grep("^[D]", names(dat), value=TRUE)
+dosenamesinLcov<-grep("^[D]", Lnodes, value=TRUE)
+dosenotinLcov<- setdiff(alldosenames,dosenamesinLcov)
+
+dropdosedat<-as.data.frame(dat %>% dplyr::select(-one_of(dosenotinLcov)))
+
+SL.library<-c("SL.glm", "SL.mean", "SL.glm.interaction", "SL.earth", "SL.glmnet",  "SL.bayesglm", "SL.xgboost")
+
+rulelong<-ltmle(dropdosedat, Anodes = Anodes, Lnodes = Lnodes, Ynodes = 
+	Ynodes, survivalOutcome=TRUE, abar=list(abar1, abar0), estimate.time = FALSE, SL.library=SL.library, variance.method="ic")
+
+sumout<-summary(rulelong)
+
+txest[[k]][i]<-sumout$effect.measures$treatment$estimate
+txlci[[k]][i]<-sumout$effect.measures$treatment$CI[1]
+txuci[[k]][i]<-sumout$effect.measures$treatment$CI[2]
+
+cntest[[k]][i]<-sumout$effect.measures$control$estimate
+cntlci[[k]][i]<-sumout$effect.measures$control$CI[1]
+cntuci[[k]][i]<-sumout$effect.measures$control$CI[2]
+
+est[[k]][i]<-sumout$effect.measures$ATE$estimate
+lci[[k]][i]<-sumout$effect.measures$ATE$CI[1]
+uci[[k]][i]<-sumout$effect.measures$ATE$CI[2]
+
+rrest[[k]][i]<-sumout$effect.measures$RR$estimate
+rrlci[[k]][i]<-sumout$effect.measures$RR$CI[1]
+rruci[[k]][i]<-sumout$effect.measures$RR$CI[2]
+
+}
+}
+
+library(mitools)
+rrvarest<-list(est[[1]],est[[1]],est[[1]],est[[1]],est[[1]] )
+for(k in 1:length(rrest)){
+	rresttmp<-unlist(rrest[[k]])
+	rrlcitmp<-unlist(rrlci[[k]])
+	for(i in 1:length(rresttmp)){
+		rrvarest[[k]][i]<-((rresttmp[i]-rrlcitmp[i])/1.96)^2
+}
+	rrest[[k]]<-unlist(rrest[[k]])
+	rrvarest[[k]]<-unlist(rrvarest[[k]])
+	}
+	
+
+rateressum<-summary(MIcombine(rrest, rrvarest))
+
+varest<-list(est[[1]],est[[1]],est[[1]],est[[1]],est[[1]] )
+for(k in 1:length(est)){
+	esttmp<-unlist(est[[k]])
+	lcitmp<-unlist(lci[[k]])
+	for(i in 1:length(esttmp)){
+		varest[[k]][i]<-((esttmp[i]-lcitmp[i])/1.96)^2
+}
+	est[[k]]<-unlist(est[[k]])
+	varest[[k]]<-unlist(varest[[k]])
+	}
+	
+
+ateressum<-summary(MIcombine(est, varest))
+ategraph<-data.frame(est=ateressum[,1], lci=ateressum[,3], uci=ateressum[,4], week=ydates)
+ategraph2<-rbind(ategraph, ategraph[21,])
+ategraph2$week<-c(3:24)
+
+
+txvarest<-list(est[[1]],est[[1]],est[[1]],est[[1]],est[[1]] )
+for(k in 1:length(txest)){
+	txesttmp<-unlist(txest[[k]])
+	txlcitmp<-unlist(txlci[[k]])
+	for(i in 1:length(txesttmp)){
+		txvarest[[k]][i]<-((txesttmp[i]-txlcitmp[i])/1.96)^2
+}
+	txest[[k]]<-unlist(txest[[k]])
+	txvarest[[k]]<-unlist(txvarest[[k]])
+	}
+	
+txressum<-summary(MIcombine(txest, txvarest))
+
+
+cntvarest<-list(est[[1]],est[[1]],est[[1]],est[[1]],est[[1]] )
+for(k in 1:length(cntest)){
+	cntesttmp<-unlist(cntest[[k]])
+	cntlcitmp<-unlist(cntlci[[k]])
+	for(i in 1:length(cntesttmp)){
+		cntvarest[[k]][i]<-((cntesttmp[i]-cntlcitmp[i])/1.96)^2
+}
+	cntest[[k]]<-unlist(cntest[[k]])
+	cntvarest[[k]]<-unlist(cntvarest[[k]])
+	}
+	
+cntressum<-summary(MIcombine(cntest, cntvarest))
+
+
+datgraph<-data.frame(est=c(txressum[,1],cntressum[,1]), lci=c(txressum[,3], cntressum[,3]), uci=c(txressum[,4], cntressum[,4]), week=rep(ydates,2), tx=c(rep("dynamic dose increase", 21), rep("constant dose", 21)))
+
+datgraph2<-rbind(datgraph[1:20, ], datgraph[21,], datgraph[21,],datgraph[22:41,], datgraph[42,], datgraph[42,])
+datgraph2$week<-c(c(3:24),c(3:24))
+
+#make the figure
+pd <- position_dodge(0.5)
+
+ggplot(datgraph, aes(x=week, y=est, linetype=tx, shape=tx, group=tx)) + 
+    geom_point(position=pd, size=3) +  ylab("Risk of Relapse") + xlab("Week")   + geom_hline(yintercept=0,linetype = 2)  + geom_smooth(method="loess", se=FALSE) + theme_classic(base_size = 12, base_family = "Helvetica") +  ylim(0,1) +  theme(
+    axis.line.x = element_line(colour = "black"),
+    axis.line.y = element_line(colour = "black")
+  )+theme(axis.text = element_text(size=12, colour="black"), axis.title=element_text(size=12, colour="black")) + theme(legend.position = c(.2, .9), legend.title=element_blank(), legend.text=element_text(size=12))
+ dev.off()
+
+
+pdf("dynamicdoseate.pdf")
+ggplot(ategraph2, aes(x=week, y=est)) + 
+ geom_errorbar(width=.1, aes(ymin=lci, ymax=uci))  + 
+    geom_point(size=3) +  ylab("Estimated difference in risk of relapse comparing dynamic to static dose" ) + xlab("Week")   + geom_hline(yintercept=0,linetype = 2)  + theme_classic(base_size = 12, base_family = "Helvetica") +    theme(
+    axis.line.x = element_line(colour = "black"),
+    axis.line.y = element_line(colour = "black")
+  )+theme(axis.text = element_text(size=12, colour="black"), axis.title=element_text(size=12, colour="black")) 
+ dev.off()
+
+#make table 1
+
+tab1dat<-widedat[[1]]
+tab1dat$maxdose<-apply(tab1dat[,paste0("D51DOSE.", c(1:22,24))], 1, function(x) max(x, na.rm=TRUE))
+tab1dat$numdoseincreases<-apply(tab1dat[,paste0("A.", c(2:22,24))], 1, function(x) sum(x,na.rm=TRUE))
+tab1dat$usefollowedbyincrease<-apply(trueabar1, 1, function(x) I(sum(x,na.rm=TRUE)>0))
+tab1dat$usefollowedbynoincrease<-apply(trueusenoinc, 1, function(x) I(sum(x,na.rm=TRUE)>0))
+tab1dat$usefollowedbynoincrease<-apply(trueuse, 1, function(x) I(sum(x,na.rm=TRUE)>0))
+tab1dat$nouse<-apply(tab1dat[,paste0("anyopioiduse.", c(1:22,24))], 1, function(x) I(sum(x,na.rm=TRUE)==0))
+tab1dat$noincrease<-apply(tab1dat[,paste0("A.", c(2:22,24))], 1, function(x) I(sum(x,na.rm=TRUE)==0))
+abar1a <- tab1dat[, paste0("anyopioiduse.", nums)] ==1
+abar1b <- tab1dat[, paste0("D51DOSE.", dosenums)]<32
+aobs<-tab1dat[,paste0("A.", nums)]==1
+abar1<-I(abar1a==TRUE & abar1b==TRUE)
+trueabar1<-I(abar1==TRUE & aobs==TRUE)
+trueuse<-I(abar1a==TRUE)
+trueusenoinc<-I(abar1==TRUE & aobs==FALSE)
+abar0<-matrix(rep(FALSE, length(Anodes)*nrow(dat)), ncol=length(Anodes))
+
+
+# 4 = use followed by increase
+# 3 = use and increase but not following the adaptive rule
+# 2 = use and no increase
+# 1 = no use but ever increase
+# 0 = no use and no increase
+tab1dat$group<-9
+tab1dat$group[tab1dat$usefollowedbyincrease==1]<-4
+tab1dat$group[tab1dat$usefollowedbyincrease==0 & tab1dat$nouse==0 & tab1dat$noincrease==0]<-3
+tab1dat$group[tab1dat$usefollowedbyincrease==0 & tab1dat$nouse==0 & tab1dat$noincrease==1]<-2
+tab1dat$group[tab1dat$nouse==1 & tab1dat$noincrease==0]<-1
+tab1dat$group[tab1dat$nouse==1 & tab1dat$noincrease==1]<-0
+
+library(knitr)
+library(kableExtra)
+
+paste_mean_and_sd = function(df_col){paste0(round(mean(df_col), 2)," (", round(sd(df_col), 2), ")")}
+
+tab1data<-tab1dat[,c(2:36,38,46,141:142,147)]
+
+all <- 
+tab1data %>% summarise(n=length(W1), women = round(mean(W2)*100, 1), age = paste_mean_and_sd(W1), homeless=round(mean(homeless)*100, 1), white=round(mean(W4white)*100, 1), other=round(mean(W4other)*100, 1), latinx=round(mean(W4hispanic)*100, 1), lths=round(mean(W61)*100, 1), hsged=round(mean(W62)*100, 1), married=round(mean(W5)*100, 1), costprimaryop = paste_mean_and_sd(W7), employed=round(mean(W8)*100, 1), agestarther = paste_mean_and_sd(W9), duruse = paste_mean_and_sd(W11),currentivdrug=round(mean(W10)*100, 1),  amphethis=round(mean(W12)*100, 1), sedativhis=round(mean(W13)*100, 1), cannabishis=round(mean(W14)*100, 1), nopain=round(mean(W24None)*100, 1), depsymp = paste_mean_and_sd(W15), dsmalc=round(mean(W16)*100, 1), dsmcoc=round(mean(W17)*100, 1), liveswithalc=round(mean(W18)*100, 1), liveswithdrug=round(mean(W19)*100, 1), sevopuse=round(mean(W20)*100, 1), lateran=round(mean(W21)*100, 1), psychhis=round(mean(W22)*100, 1), notprevtx=round(mean(W23)*100, 1), pastwithdr = paste_mean_and_sd(W25), maxdose=paste_mean_and_sd(maxdose), numdoseincreases=paste_mean_and_sd(numdoseincreases), estimvisitrelapse=paste_mean_and_sd(estimatedrelapseVISNOv2), relapse=round(mean(relapseold)*100, 1)) %>%
+  t() 
+
+groups <- 
+  tab1data %>%
+  group_by(group) %>% summarise(n=length(W1), women = round(mean(W2)*100, 1), age = paste_mean_and_sd(W1), homeless=round(mean(homeless)*100, 1), white=round(mean(W4white)*100, 1), other=round(mean(W4other)*100, 1), latinx=round(mean(W4hispanic)*100, 1), lths=round(mean(W61)*100, 1), hsged=round(mean(W62)*100, 1), married=round(mean(W5)*100, 1), costprimaryop = paste_mean_and_sd(W7), employed=round(mean(W8)*100, 1), agestarther = paste_mean_and_sd(W9), duruse = paste_mean_and_sd(W11),currentivdrug=round(mean(W10)*100, 1),  amphethis=round(mean(W12)*100, 1), sedativhis=round(mean(W13)*100, 1), cannabishis=round(mean(W14)*100, 1), nopain=round(mean(W24None)*100, 1), depsymp = paste_mean_and_sd(W15), dsmalc=round(mean(W16)*100, 1), dsmcoc=round(mean(W17)*100, 1), liveswithalc=round(mean(W18)*100, 1), liveswithdrug=round(mean(W19)*100, 1), sevopuse=round(mean(W20)*100, 1), lateran=round(mean(W21)*100, 1), psychhis=round(mean(W22)*100, 1), notprevtx=round(mean(W23)*100, 1), pastwithdr = paste_mean_and_sd(W25), maxdose=paste_mean_and_sd(maxdose), numdoseincreases=paste_mean_and_sd(numdoseincreases), estimvisitrelapse=paste_mean_and_sd(estimatedrelapseVISNOv2), relapse=round(mean(relapseold)*100, 1)) %>%
+  dplyr::select(-group) %>%
+  t()
+all %>%
+  cbind(groups) %>%
+  kable("latex",
+        col.names=c("All", "Never use, never increase", "Never use, ever increase", "Use and never increase" , "Use and non-responsive increase", "Use and responsive increase")) %>%
+  kable_styling()
+
+#make table of positivity violations 
+posplotdat<-data.frame(probs=c(initialrulelong$cum.g[,1,1],  initialrulelong$cum.g[,2,1],initialrulelong$cum.g[,3,1],initialrulelong$cum.g[,4,1],initialrulelong$cum.g[,5,1],initialrulelong$cum.g[,6,1],
+		initialrulelong$cum.g[,1,2],  initialrulelong$cum.g[,2,2],initialrulelong$cum.g[,3,2],initialrulelong$cum.g[,4,2],initialrulelong$cum.g[,5,2],initialrulelong$cum.g[,6,2],
+initialrulelong$cum.g.unbounded[,1,1],initialrulelong$cum.g.unbounded[,2,1], initialrulelong$cum.g.unbounded[,3,1],initialrulelong$cum.g.unbounded[,4,1],initialrulelong$cum.g.unbounded[,5,1],initialrulelong$cum.g.unbounded[,6,1],
+		initialrulelong$cum.g.unbounded[,1,2],  initialrulelong$cum.g.unbounded[,2,2],initialrulelong$cum.g.unbounded[,3,2],initialrulelong$cum.g.unbounded[,4,2],initialrulelong$cum.g.unbounded[,5,2],initialrulelong$cum.g.unbounded[,6,2]), week=rep(c(rep(2, 270), rep(3, 270), rep(4, 270), rep(8, 270), rep(10, 270), rep(12, 270) ), 4), bounded=c(rep("bounded", 270*12), rep("unbounded", 270*12)), abar=rep(c(rep("dynamic dosing", 270*6), rep("static dosing", 270*6)),2 ) )
+library(xtable)
+print(xtable(rbind(quantile(posplotdat[posplotdat$bounded=="unbounded" & posplotdat$abar=="dynamic dosing" & posplotdat$week==2,]$probs, probs=c(.01, .05, .1, .25, .75, .9, .95, .99)), quantile(posplotdat[posplotdat$bounded=="unbounded" & posplotdat$abar=="dynamic dosing" & posplotdat$week==3,]$probs, probs=c(.01, .05, .1, .25, .75, .9, .95, .99)), quantile(posplotdat[posplotdat$bounded=="unbounded" & posplotdat$abar=="dynamic dosing" & posplotdat$week==4,]$probs, probs=c(.01, .05, .1, .25, .75, .9, .95, .99)),quantile(posplotdat[posplotdat$bounded=="unbounded" & posplotdat$abar=="dynamic dosing" & posplotdat$week==8,]$probs, probs=c(.01, .05, .1, .25, .75, .9, .95, .99)),quantile(posplotdat[posplotdat$bounded=="unbounded" & posplotdat$abar=="dynamic dosing" & posplotdat$week==10,]$probs, probs=c(.01, .05, .1, .25, .75, .9, .95, .99)),quantile(posplotdat[posplotdat$bounded=="unbounded" & posplotdat$abar=="dynamic dosing" & posplotdat$week==12,]$probs, probs=c(.01, .05, .1, .25, .75, .9, .95, .99))), type="latex", digits=6))
