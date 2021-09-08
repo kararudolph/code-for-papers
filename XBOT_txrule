@@ -1,0 +1,77 @@
+library(SuperLearner)
+library(glmnet)
+library(data.table)
+library(tidyverse)
+library(origami)
+library(sl3)
+library(earth)
+
+#load the data 
+dat<-read.csv("data.csv")[,-1]
+W<-dat[,1:35]
+V<-W
+A<-dat$A
+
+#source functions 
+source("utils.R") 
+source("fit_mechanisms_rule_ate.R") 
+source("estimators_rule_ate.R")
+source("funs_ate_cv.R")
+
+## Make learners
+mean_lrnr<-Lrnr_mean$new()
+fglm_lrnr<-Lrnr_glm_fast$new(family=binomial())
+fglm_lrnr_uv<-Lrnr_glm_fast$new(family=gaussian())
+mars_lrnr<-Lrnr_earth$new()
+glmnet_lrnr<-Lrnr_glmnet$new(family=binomial())
+xgboost_lrnr<-Lrnr_xgboost$new()
+
+
+slbin<-Lrnr_sl$new(learners=list(fglm_lrnr,mean_lrnr,mars_lrnr, glmnet_lrnr), metalearner=Lrnr_nnls$new())
+sluv<-Lrnr_sl$new(learners=list(fglm_lrnr_uv, mean_lrnr, mars_lrnr, glmnet_lrnr), metalearner=Lrnr_nnls$new())
+
+Wnames<-names(W)
+newWnames<-c()
+    for(g in 1:length(Wnames)){
+      newWnames[g]<-paste0("W",g)
+    }
+    
+setnames(dat, old=c(Wnames), new=c(newWnames))
+    
+A<-dat[,"A"]
+Y<-dat[,"Y"]
+W<-dat[substr(names(dat),1,1)=="W"]
+
+dat$weights<-rep(1, nrow(dat))
+set.seed(87)
+set.seed(43598)
+set.seed(111)
+folds <- origami::make_folds(dat,
+                             fold_fun = origami::folds_vfold,
+                             V = 10
+                             )
+
+esttest<-EPIIEd.tmle(data=dat,learners = slbin, uvlearners = sluv,V=c("W1", "W2", "W3", "W4", "W5","W6", "W7", "W8", "W9", "W10", "W11", "W12", "W13", "W14", "W15", "W16", "W17", "W18", "W19", "W20", "W21", "W22", "W23", "W24", "W25","W26", "W27", "W28", "W29", "W30", "W31", "W32", "W33", "W34", "W35"),folds=3, family.outcome="binomial")
+
+set.seed(43598)
+esttestlassocont<-ATElassocontd.tmle(data=dat, learners = sluv,
+                     uvlearners=sluv, V=c("W1", "W2", "W3", "W4", "W5","W6", "W7", "W8", "W9", "W10", "W11", "W12", "W13", "W14", "W15","W16", "W17", "W18", "W19", "W20", "W21", "W22", "W23", "W24", "W25","W26", "W27", "W28", "W29","W30", "W31", "W32", "W33", "W34", "W35"), folds=folds,family.outcome="gaussian")
+
+screen.corRankBest<-function (Y, X, family, method = "kendall", rank = 1, ...) 
+{
+    listp <- apply(X, 2, function(x, Y, method) {
+        ifelse(var(x) <= 0, 1, cor.test(x, y = Y, method = method)$p.value)
+    }, Y = Y, method = method)
+    whichVariable <- (rank(listp) <= rank)
+    return(whichVariable)
+}
+
+slscreener <- Lrnr_pkg_SuperLearner_screener$new("screen.corRankBest")
+lrnrscreen<- make_learner(Stack, slscreener)
+lrnrsuv<- make_learner(Stack, fglm_lrnr_uv)
+
+screen_and_lrnrs_uv <- make_learner(Pipeline, slscreener, lrnrsuv)
+sluv<-Lrnr_sl$new(learners=screen_and_lrnrs_uv, metalearner=Lrnr_nnls$new())
+
+esttestsinglevar<-singlevard.tmle(data=dat, learners = slbin,
+                     uvlearners=sluv, V=c("W1", "W2", "W3", "W4", "W5","W6", "W7", "W8", "W9", "W10", "W11", "W12", "W13", "W14", "W15","W16", "W17", "W18", "W19", "W20", "W21", "W22", "W23", "W24", "W25","W26", "W27", "W28", "W29","W30", "W31", "W32", "W33", "W34", "W35"), folds=folds,family.outcome="binomial")
